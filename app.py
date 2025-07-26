@@ -1,18 +1,12 @@
-from flask import Flask, render_template, request, jsonify, session, send_file
+from flask import Flask, render_template, request, jsonify, send_file
 from werkzeug.utils import secure_filename
 import os
 from datetime import datetime
-import sqlite3
 import pytesseract
 from PIL import Image
 import fitz  # PyMuPDF for PDF processing
-import io
-import base64
 import gtts
 import tempfile
-import uuid
-from functools import wraps
-import json
 import google.generativeai as genai
 
 # Load environment variables
@@ -23,7 +17,6 @@ except ImportError:
     print("python-dotenv not installed. Using system environment variables.")
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
 
 # Configuration
 UPLOAD_FOLDER = 'uploads'
@@ -53,90 +46,10 @@ tesseract_cmd = os.environ.get('TESSERACT_CMD')
 if tesseract_cmd:
     pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
 
-# Database setup
-def init_db():
-    """Initialize SQLite database"""
-    conn = sqlite3.connect('medical_assistant.db')
-    cursor = conn.cursor()
-    
-    # Create users table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            session_id TEXT UNIQUE,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    
-    # Create conversations table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS conversations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            session_id TEXT,
-            user_message TEXT,
-            ai_response TEXT,
-            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            message_type TEXT DEFAULT 'text'
-        )
-    ''')
-    
-    # Create medical_reports table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS medical_reports (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            session_id TEXT,
-            filename TEXT,
-            extracted_text TEXT,
-            ai_analysis TEXT,
-            upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    
-    conn.commit()
-    conn.close()
-
 def allowed_file(filename):
     """Check if file extension is allowed"""
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
-
-def get_session_id():
-    """Get or create session ID"""
-    if 'session_id' not in session:
-        session['session_id'] = str(uuid.uuid4())
-        # Add user to database
-        conn = sqlite3.connect('medical_assistant.db')
-        cursor = conn.cursor()
-        cursor.execute('INSERT OR IGNORE INTO users (session_id) VALUES (?)', (session['session_id'],))
-        conn.commit()
-        conn.close()
-    return session['session_id']
-
-def save_conversation(session_id, user_message, ai_response, message_type='text'):
-    """Save conversation to database"""
-    conn = sqlite3.connect('medical_assistant.db')
-    cursor = conn.cursor()
-    cursor.execute('''
-        INSERT INTO conversations (session_id, user_message, ai_response, message_type)
-        VALUES (?, ?, ?, ?)
-    ''', (session_id, user_message, ai_response, message_type))
-    conn.commit()
-    conn.close()
-
-def get_conversation_history(session_id, limit=10):
-    """Get conversation history for a session"""
-    conn = sqlite3.connect('medical_assistant.db')
-    cursor = conn.cursor()
-    cursor.execute('''
-        SELECT user_message, ai_response, timestamp, message_type
-        FROM conversations
-        WHERE session_id = ?
-        ORDER BY timestamp DESC
-        LIMIT ?
-    ''', (session_id, limit))
-    history = cursor.fetchall()
-    conn.close()
-    return list(reversed(history))
 
 def extract_text_from_image(image_path):
     """Extract text from image using Tesseract OCR"""
@@ -162,9 +75,8 @@ def extract_text_from_pdf(pdf_path):
         print(f"Error extracting text from PDF: {e}")
         return ""
 
-def get_ai_response(prompt, context=None):
+def get_ai_response(prompt):
     """Get response from Gemini AI"""
-    
     try:
         # Check if Gemini API is configured
         if not gemini_api_key or gemini_api_key == 'your_gemini_api_key_here':
@@ -189,11 +101,7 @@ ALWAYS end your responses with this disclaimer:
 
 Remember: You are providing general health information, not replacing professional medical care."""
 
-        # Add context if available
-        full_prompt = system_prompt + "\n\n"
-        if context:
-            full_prompt += f"Previous conversation context: {context}\n\n"
-        full_prompt += f"User question: {prompt}\n\nPlease provide a helpful medical response:"
+        full_prompt = system_prompt + "\n\nUser question: " + prompt + "\n\nPlease provide a helpful medical response:"
         
         # Generate response
         response = model.generate_content(full_prompt)
@@ -227,9 +135,7 @@ def text_to_speech(text, lang='en'):
 @app.route('/')
 def index():
     """Main page"""
-    session_id = get_session_id()
-    history = get_conversation_history(session_id)
-    return render_template('index.html', history=history)
+    return render_template('index.html')
 
 @app.route('/ask', methods=['POST'])
 def ask_question():
@@ -241,19 +147,8 @@ def ask_question():
         if not question:
             return jsonify({'error': 'Please enter a question'}), 400
         
-        session_id = get_session_id()
-        
-        # Get recent conversation context
-        recent_history = get_conversation_history(session_id, limit=3)
-        context = None
-        if recent_history:
-            context = " ".join([f"User: {h[0]} Assistant: {h[1]}" for h in recent_history[-2:]])
-        
         # Get Gemini response
-        ai_response = get_ai_response(question, context)
-        
-        # Save conversation
-        save_conversation(session_id, question, ai_response)
+        ai_response = get_ai_response(question)
         
         return jsonify({
             'response': ai_response,
@@ -278,7 +173,6 @@ def upload_file():
         if not allowed_file(file.filename):
             return jsonify({'error': 'File type not allowed. Please upload PNG, JPG, JPEG, GIF, or PDF files.'}), 400
         
-        session_id = get_session_id()
         filename = secure_filename(file.filename)
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_')
         unique_filename = timestamp + filename
@@ -293,6 +187,8 @@ def upload_file():
             extracted_text = extract_text_from_image(filepath)
         
         if not extracted_text:
+            # Clean up uploaded file
+            os.remove(filepath)
             return jsonify({'error': 'Could not extract text from the file. Please ensure the image/PDF contains readable text.'}), 400
         
         # Get AI analysis of the extracted text
@@ -308,19 +204,6 @@ Please provide:
 Remember to include appropriate medical disclaimers."""
         
         ai_analysis = get_ai_response(analysis_prompt)
-        
-        # Save to database
-        conn = sqlite3.connect('medical_assistant.db')
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO medical_reports (session_id, filename, extracted_text, ai_analysis)
-            VALUES (?, ?, ?, ?)
-        ''', (session_id, filename, extracted_text, ai_analysis))
-        conn.commit()
-        conn.close()
-        
-        # Save conversation record
-        save_conversation(session_id, f"Uploaded medical report: {filename}", ai_analysis, 'file_upload')
         
         # Clean up uploaded file
         os.remove(filepath)
@@ -356,47 +239,5 @@ def text_to_speech_endpoint():
         print(f"Error in text_to_speech_endpoint: {e}")
         return jsonify({'error': 'An error occurred generating speech'}), 500
 
-@app.route('/history')
-def get_history():
-    """Get conversation history"""
-    try:
-        session_id = get_session_id()
-        history = get_conversation_history(session_id, limit=50)
-        
-        formatted_history = []
-        for h in history:
-            formatted_history.append({
-                'user_message': h[0],
-                'ai_response': h[1],
-                'timestamp': h[2],
-                'message_type': h[3]
-            })
-        
-        return jsonify({'history': formatted_history})
-        
-    except Exception as e:
-        print(f"Error getting history: {e}")
-        return jsonify({'error': 'Error retrieving history'}), 500
-
-@app.route('/clear_history', methods=['POST'])
-def clear_history():
-    """Clear conversation history"""
-    try:
-        session_id = get_session_id()
-        
-        conn = sqlite3.connect('medical_assistant.db')
-        cursor = conn.cursor()
-        cursor.execute('DELETE FROM conversations WHERE session_id = ?', (session_id,))
-        cursor.execute('DELETE FROM medical_reports WHERE session_id = ?', (session_id,))
-        conn.commit()
-        conn.close()
-        
-        return jsonify({'message': 'History cleared successfully'})
-        
-    except Exception as e:
-        print(f"Error clearing history: {e}")
-        return jsonify({'error': 'Error clearing history'}), 500
-
 if __name__ == '__main__':
-    init_db()
     app.run(debug=True, host='0.0.0.0', port=5000)

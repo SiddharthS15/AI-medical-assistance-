@@ -192,28 +192,11 @@
                             <div class="card-body">
                                 <!-- Chat Container -->
                                 <div id="chatContainer" class="chat-container">
-                                    {% if history %}
-                                        {% for msg in history %}
-                                            <div class="message {% if msg[3] == 'file_upload' %}file-upload-message{% else %}user-message{% endif %}">
-                                                <strong>You:</strong> {{ msg[0] }}
-                                                <div class="timestamp">{{ msg[2] }}</div>
-                                            </div>
-                                            <div class="message ai-message">
-                                                <strong><i class="fas fa-robot"></i> AI Assistant:</strong>
-                                                <div class="response-text">{{ msg[1] }}</div>
-                                                <div class="timestamp">{{ msg[2] }}</div>
-                                                <button class="btn btn-sm btn-outline-primary audio-control" onclick="speakText('{{ msg[1]|escape }}')">
-                                                    <i class="fas fa-volume-up"></i> Listen
-                                                </button>
-                                            </div>
-                                        {% endfor %}
-                                    {% else %}
                                         <div class="text-center text-muted p-4">
                                             <i class="fas fa-comments fa-3x mb-3"></i>
                                             <h5>Welcome to AI Medical Assistant</h5>
                                             <p>Ask me any medical question or upload a medical report to get started!</p>
                                         </div>
-                                    {% endif %}
                                 </div>
                                 
                                 <!-- Loading Indicator -->
