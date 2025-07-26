@@ -45,6 +45,16 @@ else:
 tesseract_cmd = os.environ.get('TESSERACT_CMD')
 if tesseract_cmd:
     pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
+else:
+    # Default paths for different platforms
+    import platform
+    if platform.system() == 'Linux':
+        pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
+    elif platform.system() == 'Darwin':  # macOS
+        pytesseract.pytesseract.tesseract_cmd = '/usr/local/bin/tesseract'
+
+# Set Flask secret key
+app.secret_key = os.environ.get('SECRET_KEY', 'fallback-secret-key-for-development')
 
 def allowed_file(filename):
     """Check if file extension is allowed"""
