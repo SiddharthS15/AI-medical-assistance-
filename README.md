@@ -1,5 +1,7 @@
 # AI Medical Assistant
 
+[![Deployed on Railway](https://img.shields.io/badge/Live%20Demo-Railway-blue?logo=railway)](https://ai-medical-assistance-production.up.railway.app/)
+
 AI-powered medical assistance application using Google Gemini API.
 
 ## Features
